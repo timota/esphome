@@ -1,0 +1,1171 @@
+substitutions:
+  # Project
+  #---------------------------------
+  device_name: sprinkler-controller
+  comment: 'Irrigation controller with Rain valve.'
+  version: '0.5'
+  
+  # Settings 
+  #---------------------------------
+  back_light_delay: 120s                # display backlight duration
+  ctrl_lock_delay: 10min                # unlocked state duration
+  pump_start_pump_delay: 1s             # pump delay start after zone started
+  pump_stop_valve_delay: 1s             # pump delay stop after zone stopped
+  zone1_run_duration: 900s              # default Zone1 run duration
+  zone2_run_duration: 900s              # default Zone2 run duration
+  zone3_run_duration: 900s              # default Zone3 run duration
+  zone4_run_duration: 900s              # default Zone4 run duration
+
+  # HW settings (configurable)
+  #---------------------------------
+  rel1_gpio: GPIO18
+  rel2_gpio: GPIO19
+  rel3_gpio: '12'
+  rel4_gpio: '13'
+  rel5_gpio: '14'
+  rel6_gpio: '15'
+  key1_gpio: '0'
+  key2_gpio: '1'
+  key3_gpio: '2'
+  key4_gpio: '3'
+  key5_gpio: '4'
+  key6_gpio: '5'
+  key7_gpio: '6'
+  key8_gpio: '7'
+
+# common configuration
+# ----------------------------------------------------------------
+<<: !include common/esp32.yaml
+<<: !include common/logger.yaml
+<<: !include common/api.yaml
+<<: !include common/ota.yaml
+<<: !include common/wifi_dhcp.yaml
+<<: !include common/web_server.yaml
+<<: !include common/sntp.yaml
+
+# colors ili9341 display 2.8" 320 x 240 Pixeln
+# ----------------------------------------------------------------
+packages:
+  black:        !include esphome-colors/color/COLOR_CSS_BLACK
+  white:        !include esphome-colors/color/COLOR_CSS_WHITE
+  red:          !include esphome-colors/color/COLOR_CSS_RED
+  green:        !include esphome-colors/color/COLOR_CSS_GREEN
+  yellowgreen:  !include esphome-colors/color/COLOR_CSS_YELLOWGREEN
+  skyblue:      !include esphome-colors/color/COLOR_CSS_SKYBLUE
+  tomato:       !include esphome-colors/color/COLOR_CSS_TOMATO
+  yellow:       !include esphome-colors/color/COLOR_CSS_YELLOW
+  darkblue:     !include esphome-colors/color/COLOR_CSS_DARKBLUE
+
+esphome:
+  name: $device_name
+  comment: $comment
+  project: 
+    name: timota.sprinkler_controller
+    version: $version
+  includes: 
+    - include/irrigation.h
+    - include/weather_icon_map.h
+  on_boot:
+    then:
+      # always lock state on boot
+      - lock.lock: ctrl_lock
+      - light.turn_on: back_light
+
+globals:
+  # store remaining_time when paused  
+  - id: pause_time_remaining
+    type: uint32_t
+    restore_value: no
+    initial_value: ''
+  # controller status: [full, zone, low, pause]
+  - id: ctrl_status
+    type: std::string
+    restore_value: no
+    initial_value: ''
+  # used to store prev ctrl status
+  - id: ctrl_status_prev
+    type: std::string
+    restore_value: no
+    initial_value: ''
+
+# Display configuration
+# ----------------------------------------------------------------
+spi:
+  clk_pin: GPIO14
+  mosi_pin: GPIO12
+  miso_pin: GPIO26
+
+font:
+  - file: 'fonts/top-programming-fonts/Monaco-Linux.ttf'
+    id: font_medium
+    size: 18
+  - file: 'fonts/top-programming-fonts/Monaco-Linux.ttf'
+    id: font_small
+    size: 14
+  - file: 'fonts/top-programming-fonts/Monaco-Linux.ttf'
+    id: font_tiny
+    size: 10
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: icon_font_small
+    size: 14
+    glyphs:
+      - "\U000F0341" # mdi-lock-outline
+      - "\U000F0FC7" # mdi-lock-open-variant-outline
+      - "\U000F1257" # mdi-api-off
+      - "\U000F109B" # mdi-api
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: icon_font
+    size: 36
+    glyphs:
+      - "\U000F184D" # mdi-pipe-valve
+      - "\U000F09F2" # mdi-flower-tulip-outline
+      - "\U000F08BB" # mdi-cog-outline
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: icon_font_huge
+    size: 52
+    glyphs:
+      - "\U000F184D" # mdi-pipe-valve
+      - "\U000F09F2" # mdi-flower-tulip-outline
+      - "\U000F1A28" # mdi-barrel-outline
+      - "\U000F0074" # mdi-barrel
+      - "\U000F04C5" # mdi-speedometer
+      - "\U000F1257" # mdi-api-off
+      - "\U000F0590" # weather-cloudy
+      - "\U000F0F2F" # weather-cloudy-alert
+      - "\U000F0E6E" # weather-cloudy-arrow-right
+      - "\U000F0591" # weather-fog
+      - "\U000F0592" # weather-hail
+      - "\U000F0F30" # weather-hazy
+      - "\U000F0898" # weather-hurricane
+      - "\U000F0593" # weather-lightning
+      - "\U000F067E" # weather-lightning-rainy
+      - "\U000F0594" # weather-night
+      - "\U000F0F31" # weather-night-partly-cloudy
+      - "\U000F0595" # weather-partly-cloudy
+      - "\U000F0F32" # weather-partly-lightning
+      - "\U000F0F33" # weather-partly-rainy
+      - "\U000F0F34" # weather-partly-snowy
+      - "\U000F0F35" # weather-partly-snowy-rainy
+      - "\U000F0596" # weather-pouring
+      - "\U000F0597" # weather-rainy
+      - "\U000F0598" # weather-snowy
+      - "\U000F0F36" # weather-snowy-heavy
+      - "\U000F067F" # weather-snowy-rainy
+      - "\U000F0599" # weather-sunny
+      - "\U000F0F37" # weather-sunny-alert
+      - "\U000F14E4" # weather-sunny-off
+      - "\U000F059A" # weather-sunset
+      - "\U000F059B" # weather-sunset-down
+      - "\U000F059C" # weather-sunset-up
+      - "\U000F0F38" # weather-tornado
+      - "\U000F059D" # weather-windy
+      - "\U000F059E" # weather-windy-variant
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: icon_font_medium
+    size: 24
+    glyphs:
+      - "\U000F058E" # mdi-water-percent
+      - "\U000F184D" # mdi-pipe-valve
+      - "\U000F04C5" # mdi-speedometer
+      - "\U000F0FF8" # mdi-oil-temperature
+      - "\U000F1AE1" # mdi-timer-play-outline
+      - "\U000F1AEB" # mdi-timer-stop-outline
+      - "\U000F0242" # mdi-flash-auto
+      - "\U000F1B45" # mdi-flash-off-outline
+      - "\U000F1A30" # mdi-calendar-today-outline
+      - "\U000F0E18" # mdi-calendar-month-outline
+      - "\U000F11DD" # mdi-cog-clockwise
+      - "\U000F01FB" # mdi-engine-outline
+
+display:
+  - platform: ili9341
+    id: ctrl_display
+    model: TFT 2.4
+    dc_pin: GPIO13
+    led_pin: GPIO25
+    reset_pin: GPIO27
+    rotation: 270
+    update_interval: 2s
+    pages:
+      - id: page1
+        lambda: |-
+          static int width = it.get_width();
+          static int height = it.get_height();
+          
+          static int x = 5;
+          static int y = 5;
+          static int fs = 48; //font size
+          static int spacer = 5;
+          static int fsp = fs + spacer; // font_size + spacer
+        
+          // Create header
+          static int h = 56;
+          static int sy = 15;
+          static int yr1 = sy+4;
+          static int yr2 = sy+2+24+4;
+
+          /*
+           * Header
+           */
+          it.filled_rectangle(0, 0, width, 15, id(COLOR_CSS_WHITE));
+          it.strftime(10, 0, id(font_tiny), id(COLOR_CSS_BLACK), "%H:%M %d-%m-%Y", id(sntp_time).now());
+          it.print(width-40, 0, id(icon_font_small), id(COLOR_CSS_BLACK), TextAlign::LEFT, id(connection_status).state ? "\U000F109B" : "\U000F1257");
+          it.print(width-20, 0, id(icon_font_small), id(COLOR_CSS_BLACK), TextAlign::LEFT, id(ctrl_lock).state == LOCK_STATE_LOCKED ? "\U000F0341" : "\U000F0FC7");
+
+          /*
+           *  Controller status
+           */
+          it.print(x+3, (h*0)+sy+4, id(icon_font_huge), id(COLOR_CSS_GREEN), TextAlign::LEFT, "\U000F09F2");
+          it.print(x+fsp+spacer+5, (h*0)+yr1, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, id(main_ctrl_switch).state ? "\U000F0242" : "\U000F1B45");
+          it.print(x+fsp+spacer+5, (h*0)+yr2, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, id(main_ctrl_switch).state ? "\U000F1AE1" : "\U000F1AEB");
+          it.printf(x+fsp+spacer+24+15, (h*0)+yr1+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Programm: %s", id(ctrl_status).c_str());
+          it.printf(x+fsp+spacer+24+15, (h*0)+yr2+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Remaining time: %02d:%02d", id(controller).time_remaining().value_or(0)/60, id(controller).time_remaining().value_or(0)%60 );
+          it.line(x+fsp+spacer+5, h*1+sy, width-10, h*1+sy, id(COLOR_CSS_WHITE));
+
+          /*
+           * Weather Icon
+           */
+          if (id(weather_condition).has_state() && id(weather_rain_today).has_state() && id(weather_forecast_rain_today).has_state()) {
+            it.printf(x+3, (h*1)+sy+4, id(icon_font_huge), id(COLOR_CSS_YELLOW), weather_icon_map[id(weather_condition).state.c_str()].c_str());
+            it.print(x+fsp+spacer+5, (h*1)+yr1, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "\U000F058E");
+            it.print(x+fsp+spacer+5, (h*1)+yr2, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "\U000F058E");
+            it.printf(x+fsp+spacer+24+15, (h*1)+yr1+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Rain today: %.0f mm", id(weather_rain_today).state);
+            it.printf(x+fsp+spacer+24+15, (h*1)+yr2+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Rain forecast: %.0f mm", id(weather_forecast_rain_today).state);
+          } else {
+            it.print(x+3, (h*1)+sy+4, id(icon_font_huge), id(COLOR_CSS_GREEN), TextAlign::LEFT, "\U000F1257");
+            it.print(x+fsp+spacer+7, (h*1)+yr1+3, id(font_small), id(COLOR_CSS_RED), TextAlign::LEFT, "Not connected to homeassistant");
+          }
+          it.line(x+fsp+spacer+5, h*2+sy, width-10, h*2+sy, id(COLOR_CSS_WHITE));
+
+          /*
+           *  Barrel status
+           */
+          it.print(x+3, (h*2)+sy+4, id(icon_font_huge), id(COLOR_CSS_GREEN), TextAlign::LEFT, "\U000F1A28");
+          it.print(x+fsp+spacer+5, (h*2)+yr1, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "\U000F0FF8");
+          it.print(x+fsp+spacer+5, (h*2)+yr2, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "\U000F184D");
+          it.printf(x+fsp+spacer+24+15, (h*2)+yr1+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Water level: %.0f%% / %.0fcm", id(water_tank_percent).state, id(water_tank_cm).state);
+          it.printf(x+fsp+spacer+24+15, (h*2)+yr2+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Rain valve: %s", id(relay1_rain).state ? "Open" : "Closed" );
+          it.line(x+fsp+spacer+5, h*3+sy, width-10, h*3+sy, id(COLOR_CSS_WHITE));
+          
+          /*
+           * Water meter
+           */
+          it.print(x+3, (h*3)+sy+4, id(icon_font_huge), id(COLOR_CSS_GREEN), TextAlign::LEFT, "\U000F04C5");
+          it.print(x+fsp+spacer+5, (h*3)+yr1, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "\U000F1A30");
+          it.print(x+fsp+spacer+5, (h*3)+yr2, id(icon_font_medium), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "\U000F0E18");
+          it.print(x+fsp+spacer+24+15, (h*3)+yr1+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Today water used: 100L");
+          it.print(x+fsp+spacer+24+15, (h*3)+yr2+3, id(font_small), id(COLOR_CSS_SKYBLUE), TextAlign::LEFT, "Monthly water used: 100L");
+
+      - id: page2
+        lambda: |-
+          static int width = it.get_width();
+          static int height = it.get_height();
+          
+          static int fs = 36; //font size
+          static int spacer = 5;
+          static int x = 10;
+          static int y = 20;
+          static int x1 = x+fs+5;
+          static int fsp = fs + spacer; // font_size + spacer = 41
+          static int y2 = y+15+fsp;
+
+          /*
+           * Header
+           */
+          it.filled_rectangle(0, 0, width, 15, id(COLOR_CSS_WHITE));
+          it.strftime(10, 0, id(font_tiny), id(COLOR_CSS_RED), "%H:%M %d-%m-%Y", id(sntp_time).now());
+          it.print(width-40, 0, id(icon_font_small), id(COLOR_CSS_BLACK), TextAlign::LEFT, id(connection_status).state ? "\U000F109B" : "\U000F1257");
+          it.print(width-20, 0, id(icon_font_small), id(COLOR_CSS_RED), TextAlign::LEFT, id(ctrl_lock).state == LOCK_STATE_LOCKED ? "\U000F0341" : "\U000F0FC7");
+
+          /* 
+           * Header
+           */
+          it.print(x, y, id(icon_font), id(COLOR_CSS_GREEN), TextAlign::LEFT, "\U000F09F2");
+          it.print(x1, y+9, id(font_medium), id(COLOR_CSS_GREEN), TextAlign::LEFT, "Controller");
+          it.print(x1+200, y+9, id(font_medium), id(COLOR_CSS_GREEN), TextAlign::LEFT, id(ctrl_status).c_str());
+          it.line(x, y+5+fsp, width-10, y+5+fsp, id(COLOR_CSS_WHITE));
+          
+          /*
+           * Zones 1-4
+           */
+          Color color_base;
+          Color color_status = id(COLOR_CSS_RED); // Default color for Paused status
+          int valve;
+          std::string valve_status;
+          
+          for (int i=0; i < 4; i++) {
+            valve = i+1;
+            color_base = (i % 2 == 0) ? id(COLOR_CSS_YELLOWGREEN) : id(COLOR_CSS_SKYBLUE);
+            
+            valve_status = get_valve_status(valve, controller);
+            
+            if (valve_status == "On") {
+              color_status = id(COLOR_CSS_TOMATO);
+            } else if (valve_status == "Off") {
+              color_status = color_base;
+            }
+            
+            it.print(x, y2+(fsp*i), id(icon_font), color_base, TextAlign::LEFT, "\U000F184D");
+            it.printf(x1, y2+(fsp*i)+9, id(font_medium), color_base, TextAlign::LEFT, "Zone %i", valve);
+            it.print(x1+120, y2+(fsp*i)+9, id(font_medium), color_status, TextAlign::LEFT, valve_status.c_str());
+            it.print(x1+200, y2+(fsp*i)+9, id(font_medium), color_base, TextAlign::LEFT, remaining_time3(valve, controller).c_str());
+          }
+
+      - id: page3
+        lambda: |-
+          int width = it.get_width();
+          int height = it.get_height();
+          
+          //static int fs = 36; //font size
+          static int fs = 24; //font size
+
+          static int spacer = 5;
+          static int x = 10;
+          static int y = 20;
+          static int x1 = x+fs+5;
+          static int fsp = fs + spacer; // font_size + spacer = 41
+          static int y2 = y+20+fsp;
+
+          /*
+           * Header
+           */
+          it.filled_rectangle(0, 0, width, 15, id(COLOR_CSS_WHITE));
+          it.strftime(10, 0, id(font_tiny), id(COLOR_CSS_BLACK), "%H:%M %d-%m-%Y", id(sntp_time).now());
+          it.print(width-40, 0, id(icon_font_small), id(COLOR_CSS_BLACK), TextAlign::LEFT, id(connection_status).state ? "\U000F109B" : "\U000F1257");
+          it.print(width-20, 0, id(icon_font_small), id(COLOR_CSS_BLACK), TextAlign::LEFT, id(ctrl_lock).state == LOCK_STATE_LOCKED ? "\U000F0341" : "\U000F0FC7");
+
+          it.print(x, y, id(icon_font), id(COLOR_CSS_GREEN), TextAlign::LEFT, "\U000F08BB");
+          it.print(x+36+5, y+9, id(font_medium), id(COLOR_CSS_GREEN), TextAlign::LEFT, "Settings");
+          it.line(x, y+5+36, width-10, y+5+36, id(COLOR_CSS_WHITE));
+
+          /*
+           * Zone 1-4 configuration
+           */
+          Color color_base;
+          int valve;
+          for (int i=0; i < 4; i++) {
+            valve = i+1;
+            color_base = (i % 2 == 0) ? id(COLOR_CSS_YELLOWGREEN) : id(COLOR_CSS_SKYBLUE);
+
+            it.print(x, y2+(fsp*i), id(icon_font_medium), color_base, TextAlign::LEFT, "\U000F11DD");
+            it.printf(x1, y2+(fsp*i)+5, id(font_small), color_base, TextAlign::LEFT, "Zone %i", valve);
+            it.print(x1+180, y2+(fsp*i)+5, id(font_small), color_base, TextAlign::LEFT, id(id(controller).enable_switch(valve-1)).state ? "Full" : "Disabled" );
+          }
+
+          /*
+           * Auto Rain switch
+           */
+          it.print(x, y2+(fsp*4), id(icon_font_medium), id(COLOR_CSS_TOMATO), TextAlign::LEFT, "\U000F184D");
+          it.print(x1, y2+(fsp*4)+5, id(font_small), id(COLOR_CSS_TOMATO), TextAlign::LEFT, "Auto Rain switch");
+          it.print(x1+180, y2+(fsp*4)+5, id(font_small), id(COLOR_CSS_TOMATO), TextAlign::LEFT, id(relay1_rain_enable_switch).state ? "Enabled" : "Disabled" );
+
+          /*
+           * Auto Pump switch
+           */
+          it.print(x, y2+(fsp*5), id(icon_font_medium), id(COLOR_CSS_TOMATO), TextAlign::LEFT, "\U000F01FB");
+          it.print(x1, y2+(fsp*5)+5, id(font_small), id(COLOR_CSS_TOMATO), TextAlign::LEFT, "Auto Pump switch");
+          it.print(x1+180, y2+(fsp*5)+5, id(font_small), id(COLOR_CSS_TOMATO), TextAlign::LEFT, id(relay2_pump_enable_switch).state ? "Enabled" : "Disabled" );
+
+# Define a PWM output on the ESP32
+output:
+  - platform: ledc
+    pin: GPIO25
+    id: gpio_25_backlight_pwm
+
+# Define a monochromatic, dimmable light for the backlight
+light:
+  - platform: monochromatic
+    output: gpio_25_backlight_pwm
+    name: "Display Backlight"
+    id: back_light
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+    - script.execute: turn_on_display
+
+# Lock platform
+# ----------------------------------------------------------------
+lock:
+  - platform: template
+    name: Ctrl lock
+    id: ctrl_lock
+    optimistic: true
+    assumed_state: false
+    on_unlock:
+    - script.execute: ctrl_lock_lock
+
+# Bus: I2C
+# ----------------------------------------------------------------
+i2c:
+  sda: GPIO32
+  scl: GPIO33
+  scan: true
+  id: bus_a
+
+ads1115:
+  - address: 0x48
+  
+mcp23017:
+  - id: 'mcp23017_hub'
+    address: 0x27
+
+# TODO: change type to meter
+# Sensors/Switches/Relays/etc
+# ----------------------------------------------------------------
+text_sensor:
+  - platform: homeassistant
+    id: weather_condition
+    entity_id:  sensor.openweathermap_condition
+
+sensor:
+  - platform: homeassistant
+    id: weather_rain_today
+    entity_id: sensor.openweathermap_rain
+    
+  - platform: homeassistant
+    id: weather_forecast_rain_today
+    entity_id: sensor.openweathermap_forecast_precipitation
+
+  - name: "Water tank"
+    id: water_tank_voltage
+    platform: ads1115
+    multiplexer: 'A0_GND'
+    update_interval: 10s
+    gain: 4.096
+    unit_of_measurement: "V"
+    icon: "mdi:gauge"
+    accuracy_decimals: 4
+    filters:
+    - median:
+        window_size: 7
+        send_every: 4
+        send_first_at: 3
+    - delta : 0.0015
+
+  - platform: template
+    name: "Water tank usable CM" #first X cm are below pump inlet and thus unuseable.
+    id: water_tank_cm
+    icon: 'mdi:water-well'
+    unit_of_measurement: 'cm'
+    lambda: |-
+        return id(water_tank_voltage).state;
+    update_interval: 1s #the delta filter will ensure it only sends values when something changes. 
+    filters:
+      - calibrate_linear:
+          # Measured value of X volt maps to y cm
+          - 0.4930 -> 5
+          - 0.5107 -> 10
+          - 0.5256 -> 14
+          - 0.5464 -> 18
+          - 0.5566 -> 23
+          - 0.6465 -> 46
+          - 0.6699 -> 53
+          - 0.7082 -> 62
+          - 0.7467 -> 71
+          - 0.7602 -> 76
+          - 0.79 -> 83
+      - delta : 0.01 #only send the result if the difference with the last sent result is higher than this
+    on_value:
+      then:
+        - lambda: |-
+            // if Rain enable switch is on - manage Rain valve automatically
+            if (id(relay1_rain_enable_switch).state) {
+                if (x >= 80) {
+                    id(relay1_rain).turn_off();
+                } else {
+                    id(relay1_rain).turn_on();
+                }
+            }
+            // if Pump enable switch is on - manage Pump on/off
+            if (id(relay2_pump_enable_switch).state) {
+                if (x <= 7) {
+                    id(main_ctrl_switch).turn_off();
+                    id(ctrl_status) = "Low";
+                }
+            }
+
+  - platform: template
+    name: "Water tank usable %"
+    id: water_tank_percent
+    icon: 'mdi:water-well'
+    unit_of_measurement: '%'
+    lambda: |-
+        return id(water_tank_cm).state / 83.0 * 100; 
+      #divide by max water level height to get a percentage
+    update_interval: 1s #the delta filter will ensure it only sends values when something changes. 
+    filters:
+      - lambda: |-
+          if (x >= 100) return 100.0;
+          else if (x <= 0.0) return 0.0;
+          else return x;
+      - delta : 0.01 #only send the result if the difference with the last sent result is higher than this
+
+#   - platform: pulse_counter
+#     pin:
+#       number: GPIO21
+#       mode:
+#         input: true
+#         pullup: true
+#     unit_of_measurement: 'L/min'
+#     id: water_usage
+#     name: 'Water Meter'
+#     update_interval: 30s # can be 5s
+#     filters:
+#       - lambda: return (x / 396); # 396 = 6,6 * 60
+    
+#     total:
+#       unit_of_measurement: 'L'
+#       name: 'Water Meter Total'
+#       accuracy_decimals: 1
+#       filters:
+#       - lambda: return (x / 396); # 396 = 6,6 * 60
+
+# Buttons
+#------------------------------------
+binary_sensor:
+
+  - platform: status
+    name: "Connection Status"
+    id: connection_status
+    internal: true
+
+  - platform: gpio
+    name: 'Ctrl start'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key1_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+            - ON for at most 1s
+            - OFF for at least 400ms
+        then:
+        - script.execute: turn_on_display
+        - if:
+            condition:
+                light.is_on: back_light
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - lambda: |-
+                    if (id(main_ctrl_switch).state) {
+                        ESP_LOGD("manual---->", "Shutdown controller");
+                        id(controller).shutdown();
+                        if (id(auto_advance).state) {
+                            id(ctrl_status) = "Full";
+                        } else {
+                            id(ctrl_status) = "Zone";
+                        }
+                    } else {
+                        ESP_LOGD("manual---->", "Start full cycle");
+                        id(controller).start_full_cycle ();
+                        id(ctrl_status) = "Full";
+                    }
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+      # Hold - Only when display_3 selected
+      - timing:
+          - ON for at least 2s
+        then:
+        - if:
+            condition:
+                display.is_displaying_page:
+                  id: ctrl_display
+                  page_id: page3
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - logger.log: "Toggle relay2_pump_enable_switch"
+                - switch.toggle: relay2_pump_enable_switch
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+
+  # Ctrl Pause/Resume
+  # TODO: make it work only if full_cycle and not for individual zones
+  #------------------------------------
+  - platform: gpio
+    name: 'Ctrl Pause/Resume'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key2_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+        - script.execute: turn_on_display
+        - if:
+            condition:
+                light.is_on: back_light
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - lambda: |-
+                    // save current remaining_time in global variable
+                    id(pause_time_remaining) = get_pause_time_remaining(controller);
+                    // toggle pause/resume action and set global vars: ctrl_status and ctrl_status_prev
+                    pause_resume_toggle(ctrl_status, ctrl_status_prev, controller);
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+
+  - platform: gpio
+    name: 'Rain Valve'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key3_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+          - ON for at most 1s
+        #   - OFF for at least 400ms
+          - OFF for at least 6s
+        then:
+        - if:
+            condition:
+                lock.is_unlocked: ctrl_lock
+            then:
+            - script.execute: turn_on_display
+            - switch.toggle: relay1_rain
+            - component.update: ctrl_display
+            - script.execute: ctrl_lock_lock
+      # Hold - Only when display_3 selected
+      - timing:
+          - ON for at least 2s
+        then:
+        - if:
+            condition:
+                display.is_displaying_page:
+                  id: ctrl_display
+                  page_id: page3
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - logger.log: "Toggle relay1_rain_enable_switch"
+                - switch.toggle: relay1_rain_enable_switch
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+
+  # Screen Next
+  #------------------------------------
+  - platform: gpio
+    name: 'Ctrl Screen Next'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key4_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+          - script.execute: turn_on_display
+          - if:
+              condition:
+                light.is_on: back_light
+              then:
+                - display.page.show_next: ctrl_display
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+      # unlock CTRL - tripple click + long hold
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 0.5s
+          - ON for at most 1s
+          - OFF for at most 0.5s
+          - ON for at most 1s
+          - OFF for at least 0.1s
+          - ON for at least 4s
+        then:
+        - logger.log: "Unlock CTRL"
+        - lock.unlock: ctrl_lock
+
+  - platform: gpio
+    name: 'Zone 1'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key5_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+        - script.execute: turn_on_display
+        - if:
+            condition:
+                light.is_on: back_light
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - lambda: |-
+                    // Reset paused state if any
+                    if (id(controller).paused_valve().has_value()) {
+                        id(controller).reset_resume();
+                        id(pause_time_remaining) = 0;
+                    }
+                    valve_toggle_with_global(1, ctrl_status, controller);
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+      # Hold - Only when display_2 selected
+      - timing:
+          - ON for at least 2s
+        then:
+        - if:
+            condition:
+                display.is_displaying_page:
+                  id: ctrl_display
+                  page_id: page3
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - logger.log: "Toggle zone_1_enable_switch"
+                - switch.toggle: zone_1_enable_switch
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+
+  - platform: gpio
+    name: 'Zone 2'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key6_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+        - script.execute: turn_on_display
+        - if:
+            condition:
+                light.is_on: back_light
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - lambda: |-
+                    // Reset paused state if any
+                    if (id(controller).paused_valve().has_value()) {
+                        id(controller).reset_resume();
+                        id(pause_time_remaining) = 0;
+                    }
+                    valve_toggle_with_global(2, ctrl_status, controller);
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+      # Hold - Only when display_2 selected
+      - timing:
+          - ON for at least 2s
+        then:
+        - if:
+            condition:
+                display.is_displaying_page:
+                  id: ctrl_display
+                  page_id: page3
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - logger.log: "Toggle zone_2_enable_switch"
+                - switch.toggle: zone_2_enable_switch
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+
+  - platform: gpio
+    name: 'Zone 3'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key7_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+        - script.execute: turn_on_display
+        - if:
+            condition:
+                light.is_on: back_light
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - lambda: |-
+                    // Reset paused state if any
+                    if (id(controller).paused_valve().has_value()) {
+                        id(controller).reset_resume();
+                        id(pause_time_remaining) = 0;
+                    }
+                    valve_toggle_with_global(3, ctrl_status, controller);
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+      # Hold - Only when display_2 selected
+      - timing:
+          - ON for at least 2s
+        then:
+        - if:
+            condition:
+                display.is_displaying_page:
+                  id: ctrl_display
+                  page_id: page3
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - logger.log: "Toggle zone_3_enable_switch"
+                - switch.toggle: zone_3_enable_switch
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+          
+  - platform: gpio
+    name: 'Zone 4'
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $key8_gpio
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    internal: true
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+        - script.execute: turn_on_display
+        - if:
+            condition:
+                light.is_on: back_light
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - lambda: |-
+                    // Reset paused state if any
+                    if (id(controller).paused_valve().has_value()) {
+                        id(controller).reset_resume();
+                        id(pause_time_remaining) = 0;
+                    }
+                    valve_toggle_with_global(4, ctrl_status, controller);
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+      # Hold - Only when display_2 selected
+      - timing:
+          - ON for at least 2s
+        then:
+        - if:
+            condition:
+                display.is_displaying_page:
+                  id: ctrl_display
+                  page_id: page3
+            then:
+            - if:
+                condition:
+                    lock.is_unlocked: ctrl_lock
+                then:
+                - logger.log: "Toggle zone_4_enable_switch"
+                - switch.toggle: zone_4_enable_switch
+                - component.update: ctrl_display
+                - script.execute: ctrl_lock_lock
+          
+# Switches
+#------------------------------------
+switch:
+  - platform: gpio
+    id: relay1_rain
+    name: 'Rain relay'
+    pin: $rel1_gpio
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: false
+    
+  - platform: gpio
+    id: relay2_pump_220v
+    name: 'Pump relay'
+    pin: $rel2_gpio
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: true
+    
+  - platform: gpio
+    name: "Relay Zone 1"
+    id: relay_zone_1
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $rel3_gpio
+      mode:
+        output: true
+      inverted: false
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: true
+
+  - platform: gpio
+    name: "Relay Zone 2"
+    id: relay_zone_2
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $rel4_gpio
+      mode:
+        output: true
+      inverted: false
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: true
+
+  - platform: gpio
+    name: "Relay Zone 3"
+    id: relay_zone_3
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $rel5_gpio
+      mode:
+        output: true
+      inverted: false
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: true
+      
+  - platform: gpio
+    name: "Relay Zone 4"
+    id: relay_zone_4
+    pin:
+      mcp23xxx: mcp23017_hub
+      number: $rel6_gpio
+      mode:
+        output: true
+      inverted: false
+    restore_mode: RESTORE_DEFAULT_OFF
+    internal: true
+    
+  - platform: restart
+    name: "Ctrl Restart"
+
+  - platform: template
+    name: Auto Rain switch
+    id: relay1_rain_enable_switch
+    optimistic: true
+    restore_state: true
+    assumed_state: false
+    entity_category: config
+    
+  - platform: template
+    name: Auto Pump switch
+    id: relay2_pump_enable_switch
+    optimistic: true
+    restore_state: true
+    assumed_state: false
+    entity_category: config
+
+# Controller
+#------------------------------------
+sprinkler:
+  - id: controller
+    main_switch: 
+      name: "Ctrl"
+      id: main_ctrl_switch
+      # TODO: change to templated switch, so it can depend from water level
+      internal: false
+    auto_advance_switch: 
+      name: "Auto Advance"
+      id: auto_advance
+      entity_category: config
+      on_turn_on:
+        then:
+          - lambda: 'id(ctrl_status) = "Full";'
+          - component.update: ctrl_display
+      on_turn_off:
+        then:
+          - lambda: 'id(ctrl_status) = "Zone";'
+          - component.update: ctrl_display
+    pump_start_pump_delay: $pump_start_pump_delay
+    pump_stop_valve_delay: $pump_stop_valve_delay
+    valves:
+      - valve_switch: "Zone 1 "
+        enable_switch: 
+          name: "Auto Zone 1"
+          id: zone_1_enable_switch
+          entity_category: config
+        pump_switch_id: relay2_pump_220v
+        run_duration: $zone1_run_duration
+        valve_switch_id: relay_zone_1
+        
+      - valve_switch: "Zone 2"
+        enable_switch:
+          name: "Auto Zone 2"
+          id: zone_2_enable_switch
+          entity_category: config
+        pump_switch_id: relay2_pump_220v
+        run_duration: $zone2_run_duration
+        valve_switch_id: relay_zone_2
+        
+      - valve_switch: "Zone 3"
+        enable_switch:
+          name: "Auto Zone 3"
+          id: zone_3_enable_switch
+          entity_category: config
+        pump_switch_id: relay2_pump_220v
+        run_duration: $zone3_run_duration
+        valve_switch_id: relay_zone_3
+        
+      - valve_switch: "Zone 4"
+        enable_switch:
+          name: "Auto Zone 4"
+          id: zone_4_enable_switch
+          entity_category: config
+        pump_switch_id: relay2_pump_220v
+        run_duration: $zone4_run_duration
+        valve_switch_id: relay_zone_4
+
+# Numbers
+#------------------------------------
+number:
+  - id: zone_1_duration
+    platform: template
+    name: "Zone 1 duration"
+    min_value: 1
+    max_value: 30
+    step: 1.0
+    mode: box
+    lambda: 'return id(controller).valve_run_duration(0) / 60;'
+    set_action:
+      - sprinkler.set_valve_run_duration:
+          id: controller
+          valve_number: 0
+          run_duration: !lambda "return x * 60;"
+  - id: zone_2_duration
+    platform: template
+    name: "Zone 2 duration"
+    min_value: 1
+    max_value: 30
+    step: 1.0
+    mode: box
+    lambda: 'return id(controller).valve_run_duration(1) / 60;'
+    set_action:
+      - sprinkler.set_valve_run_duration:
+          id: controller
+          valve_number: 1
+          run_duration: !lambda 'return x * 60;'
+  - id: zone_3_duration
+    platform: template
+    name: "Zone 3 duration"
+    min_value: 1
+    max_value: 30
+    step: 1.0
+    mode: box
+    lambda: 'return id(controller).valve_run_duration(2) / 60;'
+    set_action:
+      - sprinkler.set_valve_run_duration:
+          id: controller
+          valve_number: 2
+          run_duration: !lambda 'return x * 60;'
+  - id: zone_4_duration
+    platform: template
+    name: "Zone 4 duration"
+    min_value: 1
+    max_value: 30
+    step: 1.0
+    mode: box
+    lambda: 'return id(controller).valve_run_duration(3) / 60;'
+    set_action:
+      - sprinkler.set_valve_run_duration:
+          id: controller
+          valve_number: 3
+          run_duration: !lambda 'return x * 60;'
+
+# Scripts
+#------------------------------------
+script:
+  - id: turn_on_display
+    mode: restart
+    then:
+      - if:
+          condition:
+            light.is_off: back_light
+          then:
+            - display.page.show: page1
+            - delay: 0.5s   # give time to change screen before turn on back_light
+            - light.turn_on: back_light
+      - delay: $back_light_delay
+      - light.turn_off: back_light
+  - id: ctrl_lock_lock
+    mode: restart
+    then:
+      - logger.log: "Start lock script"
+      - if:
+          condition:
+            lock.is_unlocked: ctrl_lock
+          then:
+            - delay: $ctrl_lock_delay
+            - lock.lock: ctrl_lock
+            - component.update: ctrl_display

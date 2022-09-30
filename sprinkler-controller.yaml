@@ -1,4 +1,7 @@
 substitutions:
+  # Inspiration
+  # https://github.com/bruxy70/Irrigation-with-display
+
   # Project
   #---------------------------------
   device_name: sprinkler-controller
@@ -436,9 +439,10 @@ sensor:
     accuracy_decimals: 4
     filters:
     - median:
-        window_size: 7
+        window_size: 10
         send_every: 4
         send_first_at: 3
+    - lambda: if(x>=0.77) return 0.7667; else return x;
     - delta : 0.0015
 
   - platform: template
@@ -451,18 +455,17 @@ sensor:
     update_interval: 1s #the delta filter will ensure it only sends values when something changes. 
     filters:
       - calibrate_linear:
-          # Measured value of X volt maps to y cm
+          # Measured value of X volt maps to cm
           - 0.4930 -> 5
-          - 0.5107 -> 10
-          - 0.5256 -> 14
-          - 0.5464 -> 18
-          - 0.5566 -> 23
-          - 0.6465 -> 46
-          - 0.6699 -> 53
-          - 0.7082 -> 62
-          - 0.7467 -> 71
-          - 0.7602 -> 76
-          - 0.79 -> 83
+          # - 0.5107 -> 10
+          # - 0.5256 -> 14
+          # - 0.5464 -> 18
+          # - 0.5566 -> 23
+          # - 0.6465 -> 46
+          # - 0.6699 -> 53
+          # - 0.7082 -> 62
+          # - 0.7467 -> 71
+          - 0.7667 -> 80   # max 
       - delta : 0.01 #only send the result if the difference with the last sent result is higher than this
     on_value:
       then:
@@ -1169,3 +1172,4 @@ script:
             - delay: $ctrl_lock_delay
             - lock.lock: ctrl_lock
             - component.update: ctrl_display
+

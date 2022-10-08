@@ -10,6 +10,7 @@ substitutions:
   
   # Settings 
   #---------------------------------
+  web_server_include_internal: 'false'
   back_light_delay: 120s                # display backlight duration
   ctrl_lock_delay: 10min                # unlocked state duration
   pump_start_pump_delay: 1s             # pump delay start after zone started

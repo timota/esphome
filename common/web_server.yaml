@@ -1,4 +1,6 @@
 ---
 web_server:
   port: 80
-  include_internal: false
+  version: 2
+  include_internal: $web_server_include_internal
+

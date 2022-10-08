@@ -1,0 +1,569 @@
+# BH1750:
+#   IO27: SDA
+#   IO25: SCL
+# PIR:
+#   IO12
+# DFRobot:
+#   IO13
+#   IO33: TX
+#   IO14: RX
+# Button:
+#   IO32
+# Button LED:
+#   IO15
+# CCT:
+#   IO23:
+#   IO19:
+# ----------------------------------------------------------------
+substitutions:
+
+  # Project
+  #---------------------------------
+  device_name: f1-r1-light-bg-splash-01
+  comment: 'Kitchen light controller with PIR and MMWave sensors'
+  version: '0.4'
+
+  # Settings 
+  #---------------------------------
+  web_server_include_internal: 'true'
+  mmwave_sensor_name: presence            # dfrobot
+  pir_sensor_name: motion                 # pir
+  illuminance_senor_name: illuminance     # bh1750
+
+  # HW settings (configurable)
+  #---------------------------------
+  i2c_sda: '27'
+  i2c_scl: '25'
+  uart_tx_pin: GPIO33
+  uart_rx_pin: GPIO14
+  ledc_warm_white: GPIO23
+  ledc_cold_white: GPIO19
+  pin_mmwave: GPIO13 
+  pin_pir: GPIO12
+  pin_button: GPIO32
+  
+  # Timeouts
+  #---------------------------------
+  timeout_pir: 5s
+  timeout_mmwave: 5s
+  timeout_combined: 5s
+  timeout_light_on: 150s
+
+# common configuration
+# ----------------------------------------------------------------
+<<: !include common/esp32.yaml
+<<: !include common/logger.yaml
+<<: !include common/ota.yaml
+<<: !include common/api.yaml
+<<: !include common/wifi_dhcp_failover.yaml
+<<: !include common/web_server.yaml
+<<: !include common/sntp.yaml
+
+# ----------------------------------------------------------------
+esphome:
+  name: $device_name
+  comment: $comment
+  project: 
+    name: timota.$device_name
+    version: $version
+  on_boot:
+    priority: 100
+    then:
+      # Disable DFRobot led by default
+      - logger.log: "boot::disable mmwave"
+      - switch.turn_off: mmwave_sensor
+      - delay: 1s
+      - logger.log: "boot::setLedMode"
+      - uart.write: "setLedMode 1 1"
+      - delay: 1s 
+      # Disable presence output: Enable for debugging
+      - logger.log: "boot::setUartOutput"
+      - uart.write: "setUartOutput 1 0"
+      - delay: 1s 
+      - logger.log: "boot::saveConfig"
+      - uart.write: "saveConfig"
+      - delay: 3s
+      - switch.turn_on: mmwave_sensor 
+      - logger.log: "boot::enable mmwave"
+
+# ------------------------------------
+i2c:
+  sda: $i2c_sda
+  scl: $i2c_scl
+  scan: true
+  id: bus_a
+  
+# ------------------------------------
+uart:
+  id: uart_bus
+  tx_pin: $uart_tx_pin
+  rx_pin: $uart_rx_pin
+  baud_rate: 115200
+  # DISABLE: disabled by default
+  debug:
+    direction: BOTH
+    dummy_receiver: true
+    after:
+      delimiter: "\n"
+    sequence:
+      - lambda: UARTDebug::log_string(direction, bytes);
+
+# ------------------------------------
+output:
+  - platform: ledc
+    pin: $ledc_warm_white
+    id: gpio_23
+    frequency: 1000 Hz
+    max_power: 100%
+    
+  - platform: ledc
+    pin: $ledc_cold_white
+    id: gpio_19
+    frequency: 1000 Hz
+    max_power: 100%
+    
+  # - id: button_led_output
+  #   platform: gpio
+  #   pin: GPIO15
+
+# ------------------------------------
+light:
+  - platform: cwww
+    name: $device_name
+    id: rgb_light
+    cold_white: gpio_19
+    warm_white: gpio_23
+    cold_white_color_temperature: 6536 K
+    warm_white_color_temperature: 2000 K
+    constant_brightness: true
+    default_transition_length: 3s
+    flash_transition_length: 2s
+    on_turn_on:
+      then:
+        - if:
+            condition:
+            - switch.is_off: enable_auto_effect
+            then:
+            - light.control:
+                id: rgb_light
+                effect: "Follow the sun"
+            else:
+            - light.control:
+                id: rgb_light
+                effect: "None"
+    effects:
+      - lambda:
+          name: Follow the sun
+          update_interval: 1min
+          lambda: |-
+            int minutes_since_midnight = (id(sntp_time).now().hour * 60) + id(sntp_time).now().minute;
+            ESP_LOGD("custom", "Minutes since midnight: %i", minutes_since_midnight);
+            
+            int scale;
+            if (minutes_since_midnight <= 720) {
+              scale = map(minutes_since_midnight,0,720,500,153);
+            } 
+            else if (minutes_since_midnight > 720 ) {
+              scale = map(minutes_since_midnight,720,1440,153,500);
+            }
+            
+            ESP_LOGD("custom", "Scale: %i", scale);
+            
+            auto call = id(rgb_light).turn_on();
+            call.set_color_temperature(scale);
+            call.perform();
+
+  # - platform: binary
+  #   name: Main::Button Led
+  #   id: button_led
+  #   output: button_led_output
+  #   internal: true
+
+# ------------------------------------
+sensor:
+  - platform: bh1750
+    name: ${device_name}-${illuminance_senor_name}
+    address: 0x23
+    update_interval: 30s
+    device_class: illuminance
+
+# ------------------------------------
+binary_sensor:
+  - platform: gpio
+    name: ${device_name}-presence
+    device_class: presence
+    id: mmwave_detection
+    # internal: true
+    pin:
+      number: $pin_mmwave
+      mode: INPUT_PULLDOWN
+    filters:
+      - delayed_off: $timeout_mmwave
+    on_press:
+      then:
+        - if:
+            condition:
+              - switch.is_off: motion_light_override
+            then:
+              - script.execute: lights_on_motion
+      
+  - platform: gpio
+    name: ${device_name}-motion
+    device_class: motion
+    id: pir_detection
+    # internal: true
+    pin:
+      number: $pin_pir
+      mode: INPUT_PULLDOWN
+    filters:
+      - delayed_off: $timeout_pir
+    on_press:
+      then:
+        - if:
+            condition:
+              - switch.is_off: motion_light_override
+            then:
+              - script.execute: lights_on_motion
+
+  - platform: gpio
+    name: ${device_name}-button
+    id: push_button
+    internal: true
+    pin:
+      number: $pin_button
+      mode: INPUT_PULLUP
+      inverted: True
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 50ms
+    on_multi_click:
+      # Single click - turn on/off light
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+          - light.toggle: rgb_light
+
+      # Double click - enable/disable auto effect
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 399ms
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+          - if:
+              condition:
+                switch.is_on: enable_auto_effect
+              then:
+                - switch.template.publish:
+                    id: enable_auto_effect
+                    state: OFF
+              else:
+                - switch.template.publish:
+                    id: enable_auto_effect
+                    state: ON
+          - text_sensor.template.publish:
+              id: buttons
+              state: "button_pressed"
+          - delay: 50ms
+          - text_sensor.template.publish:
+              id: buttons
+              state: "double"
+      
+      # Tripple click - enable/disable lights on motion
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 399ms
+          - ON for at most 1s
+          - OFF for at most 399ms
+          - ON for at most 1s
+          - OFF for at least 400ms
+        then:
+          - if:
+              condition:
+                switch.is_on: motion_light_override
+              then:
+                - switch.template.publish:
+                    id: motion_light_override
+                    state: OFF
+              else:
+                - switch.template.publish:
+                    id: motion_light_override
+                    state: ON
+          - text_sensor.template.publish:
+              id: buttons
+              state: "button_pressed"
+          - delay: 50ms
+          - text_sensor.template.publish:
+              id: buttons
+              state: "triple"
+              
+      # Hold - disable (auto effect)/(lights on motion)
+      - timing:
+          - ON for at least 10s
+        then:
+          - switch.template.publish:
+              id: motion_light_override
+              state: OFF
+          - switch.template.publish:
+              id: enable_auto_effect
+              state: OFF
+          - text_sensor.template.publish:
+              id: buttons
+              state: "button_pressed"
+          - delay: 50ms
+          - text_sensor.template.publish:
+              id: buttons
+              state: "button_long"
+
+# ------------------------------------
+switch:
+  - platform: template
+    name: ${device_name}-auto-motion
+    id: motion_light_override
+    optimistic: true
+    restore_state: true
+    entity_category: config
+
+  - platform: template
+    name: ${device_name}-auto-affect
+    id: enable_auto_effect
+    optimistic: true
+    restore_state: true
+    entity_category: config
+    turn_on_action:
+      - light.control:
+          id: rgb_light
+          effect: "None"
+      # - light.turn_off: button_led
+    turn_off_action:
+      - light.control:
+          id: rgb_light
+          effect: "Follow the sun"
+      # - light.turn_on: button_led
+
+  - platform: template
+    name: ${mmwave_sensor_name}-enable
+    id: "mmwave_sensor"
+    optimistic: true
+    restore_state: true
+    device_class: switch
+    entity_category: config
+    # internal: true
+    turn_on_action:
+      - uart.write: "sensorStart"
+      - delay: 1s
+    turn_off_action:
+      - uart.write: "sensorStop"
+      - delay: 1s
+  
+  # - platform: template
+  #   name: "${mmwave_sensor_name}-led"
+  #   id: mmwave_led
+  #   optimistic: true
+  #   restore_state: true
+  #   assumed_state: true
+  #   entity_category: config
+  #   turn_on_action:
+  #     - switch.turn_off: mmwave_sensor
+  #     - delay: 1s
+  #     - uart.write: "setLedMode 1 0"
+  #     - delay: 1s 
+  #     - uart.write: "saveConfig"
+  #     - delay: 3s
+  #     - switch.turn_on: mmwave_sensor 
+  #   turn_off_action:
+  #     - switch.turn_off: mmwave_sensor
+  #     - delay: 1s
+  #     - uart.write: "setLedMode 1 1"
+  #     - delay: 1s      
+  #     - uart.write: "saveConfig"
+  #     - delay: 3s
+  #     - switch.turn_on: mmwave_sensor    
+  
+  # - platform: template
+  #   name: "${mmwave_sensor_name}-output-presence"
+  #   id: "uart_presence_output"
+  #   optimistic: true
+  #   restore_state: true
+  #   assumed_state: true
+  #   entity_category: diagnostic
+  #   turn_on_action:
+  #     - switch.turn_off: mmwave_sensor
+  #     - delay: 1s
+  #     - uart.write: "setUartOutput 1 1"
+  #     - delay: 1s 
+  #     - uart.write: "saveConfig"
+  #     - delay: 3s
+  #     - switch.turn_on: mmwave_sensor 
+  #   turn_off_action:
+  #     - switch.turn_off: mmwave_sensor
+  #     - delay: 1s
+  #     - uart.write: "setUartOutput 1 0"
+  #     - delay: 1s      
+  #     - uart.write: "saveConfig"
+  #     - delay: 3s
+  #     - switch.turn_on: mmwave_sensor   
+      
+  # - platform: template
+  #   name: "${mmwave_sensor_name}-output-target"
+  #   id: "uart_target_output"
+  #   optimistic: true
+  #   restore_state: true
+  #   assumed_state: false
+  #   entity_category: diagnostic
+  #   turn_on_action:
+  #     - switch.turn_off: mmwave_sensor
+  #     - delay: 1s
+  #     - uart.write: "setUartOutput 2 1 1 1"
+  #     - delay: 1s 
+  #     - uart.write: "saveConfig"
+  #     - delay: 3s
+  #     - switch.turn_on: mmwave_sensor 
+  #   turn_off_action:
+  #     - switch.turn_off: mmwave_sensor
+  #     - delay: 1s
+  #     - uart.write: "setUartOutput 2 0"
+  #     - delay: 1s      
+  #     - uart.write: "saveConfig"
+  #     - delay: 3s
+  #     - switch.turn_on: mmwave_sensor
+
+# ------------------------------------
+number:
+  - platform: template
+    name: ${mmwave_sensor_name}-distance
+    id: mmwave_distance
+    min_value: 0.15
+    max_value: 9.45
+    initial_value: 3.15
+    optimistic: true
+    step: 0.15
+    restore_value: true
+    unit_of_measurement: M
+    mode: box
+    entity_category: config
+    set_action:
+      - switch.turn_off: mmwave_sensor
+      - delay: 1s
+      - uart.write: !lambda
+                      std::string range = "setRange 0 " + str_sprintf("%.2f", x);
+                      return std::vector<unsigned char>(range.begin(), range.end());
+      - delay: 1s
+      - uart.write: "saveConfig"
+      - delay: 1s
+      - switch.turn_on: mmwave_sensor
+      - delay: 1s
+
+  - platform: template
+    name: ${mmwave_sensor_name}-latency
+    id: mmwave_latency
+    min_value: 1
+    max_value: 600
+    initial_value: 90
+    optimistic: true
+    step: 1
+    restore_value: true
+    unit_of_measurement: s
+    mode: box
+    entity_category: config
+    set_action:
+      - switch.turn_off: mmwave_sensor
+      - delay: 1s
+      - uart.write: !lambda
+                      std::string setL = "setLatency 0.1 " + str_sprintf("%.0f", x);
+                      return std::vector<unsigned char>(setL.begin(), setL.end());
+      - delay: 1s
+      - uart.write: "saveConfig"
+      - delay: 1s
+      - switch.turn_on: mmwave_sensor   
+  
+  - platform: template
+    name: ${mmwave_sensor_name}-sensitivity
+    id: sensitivity
+    min_value: 0
+    max_value: 9
+    initial_value: 6
+    optimistic: true
+    step: 1
+    restore_value: true
+    entity_category: config
+    set_action:
+      - switch.turn_off: mmwave_sensor
+      - delay: 1s
+      - uart.write: !lambda
+                      std::string mss = "setSensitivity " + to_string((int)x);
+                      return std::vector<unsigned char>(mss.begin(), mss.end());
+      - delay: 1s
+      - uart.write: "saveConfig"
+      - delay: 1s
+      - switch.turn_on: mmwave_sensor
+
+# ------------------------------------
+button:
+  - platform: template
+    name: ${mmwave_sensor_name}-getSensitivity
+    entity_category: diagnostic
+    internal: true
+    on_press:
+    - uart.write: !lambda
+                      std::string getS = "getSensitivity";
+                      return std::vector<unsigned char>(getS.begin(), getS.end());
+
+  - platform: template
+    name: ${mmwave_sensor_name}-getLatency
+    entity_category: diagnostic
+    internal: true
+    on_press:
+    - uart.write: !lambda
+                      std::string getL = "getLatency";
+                      return std::vector<unsigned char>(getL.begin(), getL.end());
+
+  - platform: template
+    name: ${mmwave_sensor_name}-getRang
+    entity_category: diagnostic
+    internal: true
+    on_press:
+    - uart.write: !lambda
+                      std::string getR = "getRange";
+                      return std::vector<unsigned char>(getR.begin(), getR.end());
+
+  - platform: restart
+    name: ${device_name}-restart
+    entity_category: diagnostic
+
+  - platform: template
+    name: ${mmwave_sensor_name}-factory-reset
+    id: "factory_reset_dfrobot"
+    entity_category: diagnostic
+    internal: true
+    on_press:
+      - switch.turn_off: mmwave_sensor
+      - delay: 1s
+      - uart.write: "resetCfg"
+      - delay: 3s
+      - switch.turn_on: mmwave_sensor 
+
+# ------------------------------------
+text_sensor:
+  - platform: template
+    name: ${device_name}-buttons
+    id: buttons
+    icon: "mdi:light-switch"
+    internal: true
+
+# ------------------------------------
+script:
+  - id: lights_on_motion
+    mode: restart
+    then:
+      - if:
+          condition:
+            - light.is_off: rgb_light
+          then:
+            - light.turn_on: rgb_light
+      - wait_until:
+          condition:
+            - binary_sensor.is_off: mmwave_detection
+      - delay: $timeout_light_on
+      - light.turn_off: rgb_light

@@ -972,7 +972,7 @@ switch:
       number: $rel3_gpio
       mode:
         output: true
-      inverted: false
+      inverted: true
     restore_mode: RESTORE_DEFAULT_OFF
     internal: true
 
@@ -984,7 +984,7 @@ switch:
       number: $rel4_gpio
       mode:
         output: true
-      inverted: false
+      inverted: true
     restore_mode: RESTORE_DEFAULT_OFF
     internal: true
 
